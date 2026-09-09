@@ -1,0 +1,47 @@
+/* Custom Styles & Animation Utilities */
+
+@keyframes pulseGlow {
+    0%, 100% {
+        box-shadow: 0 0 15px rgba(6, 182, 212, 0.2);
+    }
+    50% {
+        box-shadow: 0 0 25px rgba(6, 182, 212, 0.5);
+    }
+}
+
+.glow-cyan {
+    animation: pulseGlow 3s infinite ease-in-out;
+}
+
+/* OLED Canvas styling */
+#oled-qrcode-container img,
+#oled-qrcode-container canvas {
+    image-rendering: pixelated;
+    display: block;
+    max-width: 140px;
+    height: auto;
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+}
+::-webkit-scrollbar-track {
+    background: #090D16;
+}
+::-webkit-scrollbar-thumb {
+    background: #1F293D;
+    border-radius: 9999px;
+}
+::-webkit-scrollbar-thumb:hover {
+    background: #374151;
+}
+
+/* Glassmorphism utility */
+.glass-panel {
+    background: rgba(18, 24, 38, 0.75);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+}
