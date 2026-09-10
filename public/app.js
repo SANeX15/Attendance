@@ -1,29 +1,33 @@
-// Global State
+// OmniPresence by SANeX - Application Logic
 let html5QrcodeScanner = null;
 let isScannerActive = false;
-let isScanLocked = false; // Rate limiting lockout flag
+let isScanLocked = false;
 let currentPosition = null;
+let isGpsPermissionGranted = false;
+
 let oledTimerInterval = null;
 let oledTokenRotationTimer = null;
-let oledCountdownSeconds = 10;
+let oledCountdownSeconds = 15;
 let currentOledToken = "";
 
-// Initialize App on DOM Load
+let currentStudent = null;
+let currentAdmin = null;
+
+// Initialize on DOM Load
 document.addEventListener('DOMContentLoaded', () => {
-    initStudentCredentials();
+    checkStudentAuth();
     loadSessionsDropdowns();
-    requestCurrentLocation();
     startOledSimulator();
 });
 
 // =======================================================
-// TAB NAVIGATION
+// PORTAL & SUB-TAB NAVIGATION
 // =======================================================
 function switchTab(tabId) {
     document.querySelectorAll('.tab-section').forEach(sec => sec.classList.add('hidden'));
-    document.querySelectorAll('.tab-btn').forEach(btn => {
-        btn.classList.remove('text-cyan-400', 'bg-cyan-950/60', 'border', 'border-cyan-800/60');
-        btn.classList.add('text-slate-400');
+    document.querySelectorAll('.tab-btn, header nav button').forEach(btn => {
+        btn.classList.remove('text-black', 'bg-zinc-100', 'font-bold');
+        btn.classList.add('text-zinc-400');
     });
 
     const activeSec = document.getElementById(`tab-${tabId}`);
@@ -31,95 +35,250 @@ function switchTab(tabId) {
 
     const activeBtn = document.getElementById(`tab-${tabId}-btn`);
     if (activeBtn) {
-        activeBtn.classList.remove('text-slate-400');
-        activeBtn.classList.add('text-cyan-400', 'bg-cyan-950/60', 'border', 'border-cyan-800/60');
+        activeBtn.classList.remove('text-zinc-400');
+        activeBtn.classList.add('text-black', 'bg-zinc-100', 'font-bold');
     }
 
     if (tabId === 'admin') {
+        checkAdminAuth();
+    }
+}
+
+function switchStudentSubTab(subId) {
+    document.querySelectorAll('.student-sub-section').forEach(sec => sec.classList.add('hidden'));
+    document.querySelectorAll('#student-auth-view nav button, #student-auth-view .flex button').forEach(btn => {
+        if (btn.id && btn.id.startsWith('student-sub-')) {
+            btn.classList.remove('bg-zinc-100', 'text-black', 'font-bold');
+            btn.classList.add('bg-black', 'text-zinc-400');
+        }
+    });
+
+    const activeSec = document.getElementById(`student-sub-${subId}`);
+    if (activeSec) activeSec.classList.remove('hidden');
+
+    const activeBtn = document.getElementById(`student-sub-${subId}-btn`);
+    if (activeBtn) {
+        activeBtn.classList.remove('bg-black', 'text-zinc-400');
+        activeBtn.classList.add('bg-zinc-100', 'text-black', 'font-bold');
+    }
+
+    if (subId === 'history') {
+        loadStudentAttendanceHistory();
+    }
+}
+
+function switchAdminSubTab(subId) {
+    document.querySelectorAll('.admin-sub-section').forEach(sec => sec.classList.add('hidden'));
+    document.querySelectorAll('#admin-auth-view nav button, #admin-auth-view .flex button').forEach(btn => {
+        if (btn.id && btn.id.startsWith('admin-sub-')) {
+            btn.classList.remove('bg-zinc-100', 'text-black', 'font-bold');
+            btn.classList.add('bg-black', 'text-zinc-400');
+        }
+    });
+
+    const activeSec = document.getElementById(`admin-sub-${subId}`);
+    if (activeSec) activeSec.classList.remove('hidden');
+
+    const activeBtn = document.getElementById(`admin-sub-${subId}-btn`);
+    if (activeBtn) {
+        activeBtn.classList.remove('bg-black', 'text-zinc-400');
+        activeBtn.classList.add('bg-zinc-100', 'text-black', 'font-bold');
+    }
+
+    if (subId === 'roster') {
+        loadAdminRoster();
+    } else if (subId === 'reports') {
         loadAttendanceReport();
     }
 }
 
 // =======================================================
-// STUDENT CREDENTIALS & LOCATION
+// AUTHENTICATION LOGIC (STUDENT & ADMIN)
 // =======================================================
-function initStudentCredentials() {
-    const savedId = localStorage.getItem('attendance_student_id') || 'STU_1001';
-    const input = document.getElementById('student-id-input');
-    if (input) input.value = savedId;
-}
+async function checkStudentAuth() {
+    try {
+        const res = await fetch('/api/auth/student/me');
+        const data = await res.json();
 
-function saveStudentId() {
-    const input = document.getElementById('student-id-input');
-    if (input && input.value.trim()) {
-        const studentId = input.value.trim();
-        localStorage.setItem('attendance_student_id', studentId);
-        showToast("Student ID saved to local storage!", "success");
+        const loginCard = document.getElementById('student-login-card');
+        const authView = document.getElementById('student-auth-view');
+
+        if (res.ok && data.success && data.student) {
+            currentStudent = data.student;
+            if (loginCard) loginCard.classList.add('hidden');
+            if (authView) authView.classList.remove('hidden');
+
+            const badge = document.getElementById('student-profile-badge');
+            if (badge) badge.innerText = `Student: ${data.student.display_name} (${data.student.roll_number})`;
+        } else {
+            currentStudent = null;
+            if (loginCard) loginCard.classList.remove('hidden');
+            if (authView) authView.classList.add('hidden');
+        }
+    } catch (e) {
+        console.error("Student auth check failed:", e);
     }
 }
 
-function requestCurrentLocation() {
-    const badge = document.getElementById('gps-status-badge');
+async function handleStudentLogin(event) {
+    event.preventDefault();
+    const username = document.getElementById('student-username-input').value.trim();
+    const password = document.getElementById('student-password-input').value;
+
+    try {
+        const res = await fetch('/api/auth/student/login', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ username, password })
+        });
+        const data = await res.json();
+
+        if (res.ok && data.success) {
+            showToast("Student Login Successful!", "success");
+            checkStudentAuth();
+            loadSessionsDropdowns();
+        } else {
+            showToast(data.message || "Invalid student credentials", "error");
+        }
+    } catch (err) {
+        showToast(`Login Error: ${err.message}`, "error");
+    }
+}
+
+async function handleStudentLogout() {
+    await fetch('/api/auth/student/logout', { method: 'POST' });
+    showToast("Logged out.", "info");
+    checkStudentAuth();
+}
+
+async function checkAdminAuth() {
+    try {
+        const res = await fetch('/api/auth/admin/me');
+        const data = await res.json();
+
+        const loginCard = document.getElementById('admin-login-card');
+        const authView = document.getElementById('admin-auth-view');
+
+        if (res.ok && data.success && data.admin) {
+            currentAdmin = data.admin;
+            if (loginCard) loginCard.classList.add('hidden');
+            if (authView) authView.classList.remove('hidden');
+
+            const badge = document.getElementById('admin-profile-badge');
+            if (badge) badge.innerText = `Admin: ${data.admin.username}`;
+
+            loadSessionsDropdowns();
+            loadAdminSessionsList();
+            loadAttendanceReport();
+        } else {
+            currentAdmin = null;
+            if (loginCard) loginCard.classList.remove('hidden');
+            if (authView) authView.classList.add('hidden');
+        }
+    } catch (e) {
+        console.error("Admin auth check failed:", e);
+    }
+}
+
+async function handleAdminLogin(event) {
+    event.preventDefault();
+    const username = document.getElementById('admin-username-input').value.trim();
+    const password = document.getElementById('admin-password-input').value;
+
+    try {
+        const res = await fetch('/api/auth/admin/login', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ username, password })
+        });
+        const data = await res.json();
+
+        if (res.ok && data.success) {
+            showToast("Admin Login Successful!", "success");
+            checkAdminAuth();
+        } else {
+            showToast(data.message || "Invalid admin credentials", "error");
+        }
+    } catch (err) {
+        showToast(`Admin Login Error: ${err.message}`, "error");
+    }
+}
+
+async function handleAdminLogout() {
+    await fetch('/api/auth/admin/logout', { method: 'POST' });
+    showToast("Admin logged out.", "info");
+    checkAdminAuth();
+}
+
+// =======================================================
+// MANDATORY LOCATION PERMISSION MODAL & GPS (Question 4)
+// =======================================================
+function openLocationModalOrStart() {
+    if (isGpsPermissionGranted && currentPosition) {
+        startCameraScanner();
+    } else {
+        const modal = document.getElementById('location-permission-modal');
+        if (modal) modal.classList.remove('hidden');
+    }
+}
+
+function closeLocationModal() {
+    const modal = document.getElementById('location-permission-modal');
+    if (modal) modal.classList.add('hidden');
+    showToast("Location permission denied. Attendance scanner is locked.", "error");
+}
+
+function requestMandatoryLocationPermission() {
     const coordsEl = document.getElementById('gps-coords-display');
     const accEl = document.getElementById('gps-accuracy-display');
+    const badge = document.getElementById('gps-status-badge');
 
     if (!navigator.geolocation) {
-        updateGpsBadge("error", "Not Supported");
-        if (coordsEl) coordsEl.innerText = "Geolocation API not supported by browser.";
+        alert("Geolocation API is not supported by your browser.");
         return;
     }
-
-    updateGpsBadge("loading", "Acquiring GPS...");
 
     navigator.geolocation.getCurrentPosition(
         (pos) => {
             currentPosition = pos.coords;
-            updateGpsBadge("success", "GPS Locked");
+            isGpsPermissionGranted = true;
+            closeLocationModal();
+
             if (coordsEl) coordsEl.innerText = `Lat: ${pos.coords.latitude.toFixed(6)}, Lon: ${pos.coords.longitude.toFixed(6)}`;
-            if (accEl) accEl.innerText = `Accuracy: ±${Math.round(pos.coords.accuracy)} meters`;
+            if (accEl) accEl.innerText = `Accuracy: ±${Math.round(pos.coords.accuracy)}m (Verified)`;
+            if (badge) {
+                badge.innerText = "GPS VERIFIED";
+                badge.className = "px-2.5 py-1 text-xs font-mono border border-emerald-600 bg-emerald-950 text-emerald-300";
+            }
+
+            showToast("GPS Location Verified! Activating Scanner...", "success");
+            startCameraScanner();
         },
         (err) => {
-            updateGpsBadge("error", "GPS Error");
-            if (coordsEl) coordsEl.innerText = `Error: ${err.message}`;
-            if (accEl) accEl.innerText = "Check device location permissions.";
+            isGpsPermissionGranted = false;
+            if (coordsEl) coordsEl.innerText = `GPS Error: ${err.message}`;
+            if (accEl) accEl.innerText = "Permission Denied / Timed Out";
+            if (badge) {
+                badge.innerText = "DENIED";
+                badge.className = "px-2.5 py-1 text-xs font-mono border border-rose-800 bg-rose-950 text-rose-300";
+            }
+            alert(`Location Permission Required: ${err.message}. You cannot scan QR attendance without location verification.`);
         },
-        { enableHighAccuracy: true, timeout: 5000, maximumAge: 0 }
+        { enableHighAccuracy: true, timeout: 6000, maximumAge: 0 }
     );
 }
 
-function updateGpsBadge(type, text) {
-    const badge = document.getElementById('gps-status-badge');
-    if (!badge) return;
-
-    if (type === 'success') {
-        badge.className = "inline-flex items-center gap-1.5 text-xs px-2.5 py-0.5 rounded-full bg-emerald-950/80 text-emerald-400 border border-emerald-800/60 font-mono";
-        badge.innerHTML = `<span class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span> ${text}`;
-    } else if (type === 'loading') {
-        badge.className = "inline-flex items-center gap-1.5 text-xs px-2.5 py-0.5 rounded-full bg-yellow-950/80 text-yellow-400 border border-yellow-800/60 font-mono";
-        badge.innerHTML = `<span class="w-1.5 h-1.5 rounded-full bg-yellow-400 animate-ping"></span> ${text}`;
-    } else {
-        badge.className = "inline-flex items-center gap-1.5 text-xs px-2.5 py-0.5 rounded-full bg-rose-950/80 text-rose-400 border border-rose-800/60 font-mono";
-        badge.innerHTML = `<span class="w-1.5 h-1.5 rounded-full bg-rose-400"></span> ${text}`;
-    }
-}
-
 // =======================================================
-// CAMERA QR SCANNER & PIPELINE EXECUTION
+// CAMERA QR SCANNER & ATTENDANCE PIPELINE
 // =======================================================
 function startCameraScanner() {
     const placeholder = document.getElementById('scanner-placeholder');
     const startBtn = document.getElementById('start-scan-btn');
     const stopBtn = document.getElementById('stop-scan-btn');
-    const stateInd = document.getElementById('scanner-state-indicator');
 
     if (placeholder) placeholder.classList.add('hidden');
     if (startBtn) startBtn.classList.add('hidden');
     if (stopBtn) stopBtn.classList.remove('hidden');
-
-    if (stateInd) {
-        stateInd.innerText = "Scanning Active";
-        stateInd.className = "text-xs font-mono font-normal px-2.5 py-0.5 rounded-full bg-cyan-950 text-cyan-400 border border-cyan-800";
-    }
 
     if (!html5QrcodeScanner) {
         html5QrcodeScanner = new Html5Qrcode("reader");
@@ -131,15 +290,13 @@ function startCameraScanner() {
         { facingMode: "environment" },
         config,
         onQrCodeScanned,
-        (errorMessage) => {
-            // Scanner frame scan loop (ignore non-code frames)
-        }
+        () => {}
     ).catch(err => {
         console.error("Camera start failed:", err);
         stopCameraScanner();
         renderFeedbackBanner({
             error: "CAMERA_ERROR",
-            message: "Unable to access camera. Please check permissions or select another device."
+            message: "Unable to access camera. Please verify device permissions."
         });
     });
 
@@ -151,10 +308,7 @@ function stopCameraScanner() {
         html5QrcodeScanner.stop().then(() => {
             isScannerActive = false;
             resetScannerUi();
-        }).catch(err => {
-            console.error("Error stopping scanner:", err);
-            resetScannerUi();
-        });
+        }).catch(() => resetScannerUi());
     } else {
         resetScannerUi();
     }
@@ -164,97 +318,61 @@ function resetScannerUi() {
     const placeholder = document.getElementById('scanner-placeholder');
     const startBtn = document.getElementById('start-scan-btn');
     const stopBtn = document.getElementById('stop-scan-btn');
-    const stateInd = document.getElementById('scanner-state-indicator');
 
     if (placeholder) placeholder.classList.remove('hidden');
     if (startBtn) startBtn.classList.remove('hidden');
     if (stopBtn) stopBtn.classList.add('hidden');
-
-    if (stateInd) {
-        stateInd.innerText = "Idle";
-        stateInd.className = "text-xs font-mono font-normal px-2.5 py-0.5 rounded-full bg-slate-800 text-slate-400 border border-slate-700";
-    }
 }
 
-/**
- * Triggered automatically when a QR code is detected by camera
- */
-async function onQrCodeScanned(decodedText, decodedResult) {
-    if (isScanLocked) return; // Rate limiting lockout
+async function onQrCodeScanned(decodedText) {
+    if (isScanLocked) return;
     
-    // Lock scanner to prevent duplicate triggers
     isScanLocked = true;
-    showProcessingOverlay("High-Accuracy GPS Acquisition...");
+    showProcessingOverlay("Verifying GPS & TOTP Payload...");
 
-    // Pause camera scanning temporarily
     if (html5QrcodeScanner && isScannerActive) {
         try { html5QrcodeScanner.pause(); } catch(e) {}
     }
 
-    const studentIdInput = document.getElementById('student-id-input');
-    const studentId = studentIdInput ? studentIdInput.value.trim() : 'STU_1001';
+    // Refresh GPS coordinates at exact scan moment
+    let lat = currentPosition ? currentPosition.latitude : null;
+    let lon = currentPosition ? currentPosition.longitude : null;
 
-    if (!studentId) {
-        hideProcessingOverlay();
-        renderFeedbackBanner({
-            error: "MISSING_STUDENT_ID",
-            message: "Please enter your Student ID before scanning."
-        });
-        unlockScannerWithDelay();
-        return;
-    }
-
-    // Step: Capture GPS at the exact moment of scan
-    let lat = null, lon = null;
     try {
-        const pos = await getCurrentGpsPromise(5000);
-        lat = pos.coords.latitude;
-        lon = pos.coords.longitude;
-        currentPosition = pos.coords;
-        updateGpsBadge("success", "GPS Captured");
-    } catch (gpsErr) {
+        const freshPos = await getCurrentGpsPromise(4000);
+        lat = freshPos.coords.latitude;
+        lon = freshPos.coords.longitude;
+        currentPosition = freshPos.coords;
+    } catch (e) {}
+
+    if (!lat || !lon) {
         hideProcessingOverlay();
-        console.warn("GPS Acquisition failed at scan time:", gpsErr);
         renderFeedbackBanner({
             error: "GPS_DISABLED",
-            message: `GPS Acquisition Failed: ${gpsErr.message || 'Permission denied or timed out'}. Geolocation is required for attendance.`
+            message: "Location permissions required. Please verify GPS access."
         });
         unlockScannerWithDelay();
         return;
     }
 
-    // Step: Submit payload to Backend REST API
-    updateProcessingText("Submitting Payload & Verifying HMAC...");
-    await processAttendancePayload(studentId, decodedText, lat, lon);
-    
+    await processAttendancePayload(decodedText, lat, lon);
     hideProcessingOverlay();
     unlockScannerWithDelay();
 }
 
-function getCurrentGpsPromise(timeoutMs = 5000) {
+function getCurrentGpsPromise(timeoutMs = 4000) {
     return new Promise((resolve, reject) => {
-        if (!navigator.geolocation) {
-            return reject(new Error("Geolocation API not available"));
-        }
-        navigator.geolocation.getCurrentPosition(
-            resolve,
-            reject,
-            { enableHighAccuracy: true, timeout: timeoutMs, maximumAge: 0 }
-        );
+        if (!navigator.geolocation) return reject(new Error("Geolocation API unavailable"));
+        navigator.geolocation.getCurrentPosition(resolve, reject, { enableHighAccuracy: true, timeout: timeoutMs, maximumAge: 0 });
     });
 }
 
-async function processAttendancePayload(studentId, token, lat, lon) {
+async function processAttendancePayload(token, lat, lon) {
     try {
         const response = await fetch('/api/attendance/scan', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                student_id: studentId,
-                token: token,
-                lat: lat,
-                lon: lon
-            })
+            body: JSON.stringify({ token, lat, lon })
         });
 
         const data = await response.json();
@@ -273,33 +391,9 @@ async function processAttendancePayload(studentId, token, lat, lon) {
     } catch (err) {
         renderFeedbackBanner({
             error: "NETWORK_ERROR",
-            message: `Failed to connect to backend server: ${err.message}`
+            message: `Server Connection Failed: ${err.message}`
         });
     }
-}
-
-function submitManualToken() {
-    const input = document.getElementById('manual-token-input');
-    if (!input || !input.value.trim()) return;
-    
-    const token = input.value.trim();
-    const studentIdInput = document.getElementById('student-id-input');
-    const studentId = studentIdInput ? studentIdInput.value.trim() : 'STU_1001';
-
-    showProcessingOverlay("Fetching GPS & Submitting...");
-    
-    navigator.geolocation.getCurrentPosition(
-        (pos) => {
-            processAttendancePayload(studentId, token, pos.coords.latitude, pos.coords.longitude)
-                .finally(() => hideProcessingOverlay());
-        },
-        (err) => {
-            // Fallback to default demo center if GPS denied in test env
-            processAttendancePayload(studentId, token, 37.774929, -122.419416)
-                .finally(() => hideProcessingOverlay());
-        },
-        { enableHighAccuracy: true, timeout: 4000 }
-    );
 }
 
 function unlockScannerWithDelay() {
@@ -308,7 +402,7 @@ function unlockScannerWithDelay() {
         if (html5QrcodeScanner && isScannerActive) {
             try { html5QrcodeScanner.resume(); } catch(e) {}
         }
-    }, 3000); // 3-second lockout rate limiting
+    }, 3000);
 }
 
 function showProcessingOverlay(text) {
@@ -318,18 +412,13 @@ function showProcessingOverlay(text) {
     if (textEl) textEl.innerText = text;
 }
 
-function updateProcessingText(text) {
-    const textEl = document.getElementById('processing-status-text');
-    if (textEl) textEl.innerText = text;
-}
-
 function hideProcessingOverlay() {
     const overlay = document.getElementById('processing-overlay');
     if (overlay) overlay.classList.add('hidden');
 }
 
 // =======================================================
-// FEEDBACK BANNER DISPLAY (HANDLES ALL 6 REJECTION CODES)
+// FEEDBACK BANNER DISPLAY (MONOCHROME HIGH CONTRAST)
 // =======================================================
 function renderFeedbackBanner(data) {
     const banner = document.getElementById('feedback-banner');
@@ -340,93 +429,34 @@ function renderFeedbackBanner(data) {
 
     if (data.isSuccess) {
         banner.innerHTML = `
-            <div class="bg-gradient-to-r from-emerald-950/90 to-slate-900 border-2 border-emerald-500/80 rounded-3xl p-6 shadow-2xl shadow-emerald-950/50 flex flex-col md:flex-row items-center justify-between gap-4">
-                <div class="flex items-center space-x-4">
-                    <div class="w-14 h-14 rounded-2xl bg-emerald-500/20 border border-emerald-400 text-emerald-400 flex items-center justify-center shrink-0">
-                        <svg class="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"/></svg>
+            <div class="bg-black border-2 border-white p-6 shadow-2xl flex flex-col md:flex-row items-center justify-between gap-4 font-mono">
+                <div class="space-y-1">
+                    <div class="flex items-center gap-2">
+                        <span class="px-2 py-0.5 bg-white text-black font-bold text-xs">200 SUCCESS</span>
+                        <h3 class="text-base font-bold text-white uppercase tracking-wider">Attendance Marked Present</h3>
                     </div>
-                    <div>
-                        <div class="flex items-center gap-2">
-                            <h3 class="text-xl font-bold text-white">Attendance Marked Present!</h3>
-                            <span class="text-xs px-2.5 py-0.5 rounded-full bg-emerald-900 text-emerald-300 font-mono font-semibold">200 OK</span>
-                        </div>
-                        <p class="text-sm text-emerald-200 mt-1 font-medium">${data.message}</p>
-                        <p class="text-xs text-slate-400 mt-0.5 font-mono">Student: ${data.studentId} | Session: ${data.sessionId}</p>
-                    </div>
+                    <p class="text-xs text-zinc-300">${data.message}</p>
                 </div>
-                <div class="bg-emerald-900/40 px-4 py-2 rounded-2xl border border-emerald-700/50 text-center shrink-0">
-                    <span class="block text-[10px] uppercase tracking-wider text-emerald-300 font-bold">Geofence Distance</span>
-                    <span class="text-lg font-mono font-bold text-emerald-200">${data.distance}m</span>
+                <div class="bg-zinc-900 border border-zinc-700 px-4 py-2 text-center">
+                    <span class="block text-[10px] uppercase text-zinc-400">Distance</span>
+                    <span class="text-base font-bold text-white">${data.distance}m</span>
                 </div>
             </div>
         `;
         return;
     }
 
-    // Error Codes Mapping
     const errorCode = data.error || "REJECTED";
-    let theme = {
-        bg: "from-rose-950/90 to-slate-900",
-        border: "border-rose-500/80",
-        text: "text-rose-300",
-        badgeBg: "bg-rose-900",
-        badgeText: "text-rose-300",
-        title: "Scan Rejected",
-        icon: `<svg class="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>`
-    };
-
-    if (errorCode === "INVALID_SIGNATURE") {
-        theme.title = "401 INVALID SIGNATURE";
-        theme.bg = "from-red-950/90 to-slate-900";
-        theme.border = "border-red-500";
-        theme.badgeBg = "bg-red-900";
-        theme.badgeText = "text-red-300";
-    } else if (errorCode === "TOKEN_EXPIRED") {
-        theme.title = "400 TOKEN EXPIRED";
-        theme.bg = "from-amber-950/90 to-slate-900";
-        theme.border = "border-amber-500";
-        theme.badgeBg = "bg-amber-900";
-        theme.badgeText = "text-amber-300";
-    } else if (errorCode === "TOKEN_ALREADY_USED") {
-        theme.title = "409 REPLAY ATTACK (ALREADY USED)";
-        theme.bg = "from-purple-950/90 to-slate-900";
-        theme.border = "border-purple-500";
-        theme.badgeBg = "bg-purple-900";
-        theme.badgeText = "text-purple-300";
-    } else if (errorCode === "ALREADY_MARKED") {
-        theme.title = "409 ALREADY MARKED";
-        theme.bg = "from-blue-950/90 to-slate-900";
-        theme.border = "border-blue-500";
-        theme.badgeBg = "bg-blue-900";
-        theme.badgeText = "text-blue-300";
-    } else if (errorCode === "OUT_OF_BOUNDS") {
-        theme.title = "403 OUT OF BOUNDS";
-        theme.bg = "from-orange-950/90 to-slate-900";
-        theme.border = "border-orange-500";
-        theme.badgeBg = "bg-orange-900";
-        theme.badgeText = "text-orange-300";
-    } else if (errorCode === "GPS_DISABLED") {
-        theme.title = "GPS DISABLED / ERROR";
-        theme.bg = "from-rose-950/90 to-slate-900";
-        theme.border = "border-rose-500";
-    }
-
     banner.innerHTML = `
-        <div class="bg-gradient-to-r ${theme.bg} border-2 ${theme.border} rounded-3xl p-6 shadow-2xl flex flex-col md:flex-row items-center justify-between gap-4">
-            <div class="flex items-center space-x-4">
-                <div class="w-14 h-14 rounded-2xl bg-slate-900/60 border border-slate-700 ${theme.text} flex items-center justify-center shrink-0">
-                    ${theme.icon}
+        <div class="bg-black border-2 border-zinc-600 p-6 shadow-2xl flex flex-col md:flex-row items-center justify-between gap-4 font-mono">
+            <div class="space-y-1">
+                <div class="flex items-center gap-2">
+                    <span class="px-2 py-0.5 bg-zinc-800 text-white font-bold text-xs border border-zinc-600">${errorCode}</span>
+                    <h3 class="text-base font-bold text-white uppercase tracking-wider">Scan Verification Failed</h3>
                 </div>
-                <div>
-                    <div class="flex items-center gap-2">
-                        <h3 class="text-xl font-bold text-white">${theme.title}</h3>
-                        <span class="text-xs px-2.5 py-0.5 rounded-full ${theme.badgeBg} ${theme.badgeText} font-mono font-semibold">${errorCode}</span>
-                    </div>
-                    <p class="text-sm ${theme.text} mt-1 font-medium">${data.message}</p>
-                    ${data.distance_meters ? `<p class="text-xs text-slate-400 mt-1 font-mono">Distance: ${data.distance_meters}m | Max Radius: ${data.radius_meters}m</p>` : ''}
-                </div>
+                <p class="text-xs text-zinc-400">${data.message}</p>
             </div>
-            <button onclick="document.getElementById('feedback-banner').classList.add('hidden')" class="px-4 py-2 bg-slate-900/80 hover:bg-slate-900 text-slate-300 text-xs font-semibold rounded-xl border border-slate-700 transition">
+            <button onclick="document.getElementById('feedback-banner').classList.add('hidden')" class="px-4 py-2 btn-mono-outline text-xs uppercase">
                 Dismiss
             </button>
         </div>
@@ -434,28 +464,64 @@ function renderFeedbackBanner(data) {
 }
 
 // =======================================================
-// VIRTUAL OLED SIMULATOR (ESP32 DISPLAY) LOGIC
+// STUDENT ATTENDANCE HISTORY
+// =======================================================
+async function loadStudentAttendanceHistory() {
+    const tbody = document.getElementById('student-history-tbody');
+    if (!tbody) return;
+
+    try {
+        const res = await fetch('/api/student/history');
+        const data = await res.json();
+
+        if (res.ok && data.success) {
+            if (data.records.length === 0) {
+                tbody.innerHTML = `<tr><td colspan="4" class="p-4 text-center text-zinc-500 italic">No attendance records found.</td></tr>`;
+                return;
+            }
+
+            let rows = "";
+            data.records.forEach((r, idx) => {
+                const dateStr = new Date(r.scanned_at).toLocaleString();
+                rows += `
+                    <tr class="hover:bg-zinc-900">
+                        <td class="p-3 text-zinc-500">${idx + 1}</td>
+                        <td class="p-3 font-bold text-white">${r.session_name} (${r.session_id})</td>
+                        <td class="p-3 text-zinc-300">${r.distance_meters}m</td>
+                        <td class="p-3 text-zinc-400">${dateStr}</td>
+                    </tr>
+                `;
+            });
+            tbody.innerHTML = rows;
+        } else {
+            tbody.innerHTML = `<tr><td colspan="4" class="p-4 text-center text-rose-400">${data.message}</td></tr>`;
+        }
+    } catch (err) {
+        tbody.innerHTML = `<tr><td colspan="4" class="p-4 text-center text-rose-400">Failed to load history.</td></tr>`;
+    }
+}
+
+// =======================================================
+// OLED SIMULATOR (15s STEP)
 // =======================================================
 function startOledSimulator() {
     fetchNewOledToken();
 
-    // Rotate token every 10 seconds
     oledTokenRotationTimer = setInterval(() => {
-        oledCountdownSeconds = 10;
+        oledCountdownSeconds = 15;
         fetchNewOledToken();
-    }, 10000);
+    }, 15000);
 
-    // Update progress bar smooth countdown
     oledTimerInterval = setInterval(() => {
         oledCountdownSeconds -= 0.1;
-        if (oledCountdownSeconds < 0) oledCountdownSeconds = 10;
+        if (oledCountdownSeconds < 0) oledCountdownSeconds = 15;
 
-        const progressPercent = (oledCountdownSeconds / 10) * 100;
+        const progressPercent = (oledCountdownSeconds / 15) * 100;
         const bar = document.getElementById('oled-progress-bar');
         const timerText = document.getElementById('oled-timer-text');
         
         if (bar) bar.style.width = `${progressPercent}%`;
-        if (timerText) timerText.innerText = `ROTATING: ${Math.ceil(oledCountdownSeconds)}s`;
+        if (timerText) timerText.innerText = `STEP: ${Math.ceil(oledCountdownSeconds)}s`;
     }, 100);
 }
 
@@ -465,25 +531,22 @@ async function fetchNewOledToken() {
 
     try {
         const res = await fetch(`/api/token/generate?session_id=${sessionId}`);
+        if (!res.ok) return;
         const data = await res.json();
         currentOledToken = data.token;
-        renderOledDisplay(data.token, sessionId);
-    } catch (err) {
-        console.error("Failed to generate OLED token:", err);
-    }
+        renderOledDisplay(data.token, sessionId, data.time_step);
+    } catch (err) {}
 }
 
-function renderOledDisplay(token, sessionId) {
+function renderOledDisplay(token, sessionId, timeStep) {
     const container = document.getElementById('oled-qrcode-container');
     const shortEl = document.getElementById('oled-payload-short');
     const fullEl = document.getElementById('oled-full-token-display');
     const sessEl = document.getElementById('oled-session-id');
-    const issuedEl = document.getElementById('oled-issued-at');
-    const nonceEl = document.getElementById('oled-nonce');
+    const stepEl = document.getElementById('oled-time-step');
 
     if (container) {
         container.innerHTML = "";
-        // Use QRCode.js library to render visual QR pattern
         new QRCode(container, {
             text: token,
             width: 120,
@@ -496,34 +559,19 @@ function renderOledDisplay(token, sessionId) {
 
     if (shortEl) shortEl.innerText = token;
     if (fullEl) fullEl.innerText = token;
-
-    const parts = token.split(':');
-    if (parts.length === 4) {
-        if (sessEl) sessEl.innerText = parts[0];
-        if (issuedEl) issuedEl.innerText = new Date(parseInt(parts[1]) * 1000).toLocaleTimeString();
-        if (nonceEl) nonceEl.innerText = parts[2];
-    }
-}
-
-function simulateDirectScanFromOled() {
-    if (!currentOledToken) return;
-    
-    switchTab('student');
-    const manualInput = document.getElementById('manual-token-input');
-    if (manualInput) manualInput.value = currentOledToken;
-
-    submitManualToken();
+    if (sessEl) sessEl.innerText = sessionId;
+    if (stepEl) stepEl.innerText = timeStep || "--";
 }
 
 function copyOledToken() {
     if (currentOledToken) {
         navigator.clipboard.writeText(currentOledToken);
-        showToast("OLED Token copied to clipboard!", "info");
+        showToast("OLED TOTP token copied!", "info");
     }
 }
 
 // =======================================================
-// ADMIN & SESSIONS MANAGEMENT
+// ADMIN DASHBOARD & ROSTER RESET ACTIONS (Question 2)
 // =======================================================
 async function loadSessionsDropdowns() {
     try {
@@ -536,7 +584,8 @@ async function loadSessionsDropdowns() {
 
             let html = "";
             data.sessions.forEach(s => {
-                html += `<option value="${s.id}">${s.name} (${s.id})</option>`;
+                const statusStr = s.is_active ? 'Active' : 'Closed';
+                html += `<option value="${s.id}">${s.name} (${s.id}) [${statusStr}]</option>`;
             });
 
             if (studentSelect) {
@@ -548,9 +597,7 @@ async function loadSessionsDropdowns() {
                 reportSelect.innerHTML = html;
             }
         }
-    } catch (e) {
-        console.error("Failed to load sessions:", e);
-    }
+    } catch (e) {}
 }
 
 function updateSessionGeofenceInfo() {
@@ -565,6 +612,41 @@ function updateSessionGeofenceInfo() {
             infoEl.innerText = `Radius: ${sess.radius_meters}m | Lat: ${sess.center_lat.toFixed(4)}, Lon: ${sess.center_lon.toFixed(4)}`;
         }
     });
+}
+
+async function loadAdminSessionsList() {
+    const container = document.getElementById('admin-sessions-list');
+    if (!container) return;
+
+    try {
+        const res = await fetch('/api/sessions');
+        const data = await res.json();
+
+        if (res.ok && data.sessions) {
+            if (data.sessions.length === 0) {
+                container.innerHTML = `<p class="text-zinc-500 italic">No assigned sessions.</p>`;
+                return;
+            }
+
+            let html = "";
+            data.sessions.forEach(s => {
+                const statusBadge = s.is_active ? `<span class="text-emerald-400 font-bold">[ACTIVE]</span>` : `<span class="text-zinc-500">[CLOSED]</span>`;
+                html += `
+                    <div class="p-3 bg-black border border-zinc-800 flex justify-between items-center">
+                        <div>
+                            <div class="font-bold text-white">${s.name} (${s.id})</div>
+                            <div class="text-[11px] text-zinc-500 mt-0.5">Geofence: ${s.radius_meters}m | Lat: ${s.center_lat}, Lon: ${s.center_lon}</div>
+                        </div>
+                        <div class="flex items-center space-x-2">
+                            ${statusBadge}
+                            ${s.is_active ? `<button onclick="endSessionById('${s.id}')" class="px-2.5 py-1 btn-mono-outline text-[10px] uppercase text-rose-400 border-rose-800">End</button>` : ''}
+                        </div>
+                    </div>
+                `;
+            });
+            container.innerHTML = html;
+        }
+    } catch (e) {}
 }
 
 async function handleCreateSession(event) {
@@ -590,8 +672,9 @@ async function handleCreateSession(event) {
 
         const data = await res.json();
         if (res.ok && data.success) {
-            showToast(`Session '${data.session.name}' created successfully!`, "success");
+            showToast(`Session '${data.session.name}' created!`, "success");
             loadSessionsDropdowns();
+            loadAdminSessionsList();
             document.getElementById('create-session-form').reset();
         } else {
             showToast(`Error: ${data.message}`, "error");
@@ -601,14 +684,141 @@ async function handleCreateSession(event) {
     }
 }
 
+async function endSessionById(sessionId) {
+    if (!confirm(`End session '${sessionId}'?`)) return;
+
+    try {
+        const res = await fetch(`/api/session/${sessionId}/end`, { method: 'POST' });
+        const data = await res.json();
+
+        if (res.ok && data.success) {
+            showToast(data.message, "success");
+            loadSessionsDropdowns();
+            loadAdminSessionsList();
+            loadAttendanceReport();
+        } else {
+            showToast(`Error: ${data.message}`, "error");
+        }
+    } catch (err) {
+        showToast(`Error: ${err.message}`, "error");
+    }
+}
+
+async function endSelectedSession() {
+    const select = document.getElementById('report-session-select');
+    if (select && select.value) endSessionById(select.value);
+}
+
+async function loadAdminRoster() {
+    const tbody = document.getElementById('admin-roster-tbody');
+    if (!tbody) return;
+
+    try {
+        const res = await fetch('/api/admin/students');
+        const data = await res.json();
+
+        if (res.ok && data.students) {
+            if (data.students.length === 0) {
+                tbody.innerHTML = `<tr><td colspan="4" class="p-4 text-center text-zinc-500 italic">No students provisioned yet.</td></tr>`;
+                return;
+            }
+
+            let rows = "";
+            data.students.forEach(s => {
+                rows += `
+                    <tr class="hover:bg-zinc-900">
+                        <td class="p-3 text-white font-bold">${s.username}</td>
+                        <td class="p-3 text-zinc-300">${s.display_name}</td>
+                        <td class="p-3 text-zinc-400 font-mono">${s.roll_number}</td>
+                        <td class="p-3 text-right">
+                            <button onclick="openResetPasswordModal('${s.username}', '${s.display_name}')" class="px-2.5 py-1 btn-mono-outline text-[11px] uppercase">
+                                Reset Password
+                            </button>
+                        </td>
+                    </tr>
+                `;
+            });
+            tbody.innerHTML = rows;
+        } else {
+            tbody.innerHTML = `<tr><td colspan="4" class="p-4 text-center text-rose-400">${data.message}</td></tr>`;
+        }
+    } catch (e) {
+        tbody.innerHTML = `<tr><td colspan="4" class="p-4 text-center text-rose-400">Failed to load roster.</td></tr>`;
+    }
+}
+
+function openResetPasswordModal(username, displayName) {
+    const modal = document.getElementById('reset-password-modal');
+    const userField = document.getElementById('reset-modal-username');
+    const label = document.getElementById('reset-modal-student-name');
+    const passInput = document.getElementById('reset-modal-password-input');
+
+    if (userField) userField.value = username;
+    if (label) label.innerText = `Student: ${displayName} (${username})`;
+    if (passInput) passInput.value = "";
+    if (modal) modal.classList.remove('hidden');
+}
+
+function closeResetPasswordModal() {
+    const modal = document.getElementById('reset-password-modal');
+    if (modal) modal.classList.add('hidden');
+}
+
+async function handleAdminResetPasswordSubmit(event) {
+    event.preventDefault();
+    const username = document.getElementById('reset-modal-username').value;
+    const new_password = document.getElementById('reset-modal-password-input').value;
+
+    try {
+        const res = await fetch('/api/admin/students/reset-password', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ username, new_password })
+        });
+
+        const data = await res.json();
+        if (res.ok && data.success) {
+            showToast(`Password reset successfully for student '${username}'!`, "success");
+            closeResetPasswordModal();
+        } else {
+            showToast(`Error: ${data.message}`, "error");
+        }
+    } catch (err) {
+        showToast(`Reset Error: ${err.message}`, "error");
+    }
+}
+
+async function handleBulkStudentUpload(event) {
+    event.preventDefault();
+    const csvData = document.getElementById('bulk-csv-input').value.trim();
+    if (!csvData) return;
+
+    try {
+        const res = await fetch('/api/admin/students/bulk-upload', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ csv: csvData })
+        });
+
+        const data = await res.json();
+        if (res.ok && data.success) {
+            showToast(data.message, "success");
+            document.getElementById('bulk-csv-input').value = "";
+            loadAdminRoster();
+        } else {
+            showToast(`Upload Error: ${data.message}`, "error");
+        }
+    } catch (err) {
+        showToast(`Upload Error: ${err.message}`, "error");
+    }
+}
+
 function fillAdminGpsLocation() {
     navigator.geolocation.getCurrentPosition((pos) => {
         document.getElementById('admin-sess-lat').value = pos.coords.latitude;
         document.getElementById('admin-sess-lon').value = pos.coords.longitude;
-        showToast("Filled center coordinates with current GPS location!", "info");
-    }, (err) => {
-        showToast(`GPS Error: ${err.message}`, "error");
-    });
+        showToast("Filled GPS position!", "info");
+    }, (err) => showToast(`GPS Error: ${err.message}`, "error"));
 }
 
 async function loadAttendanceReport() {
@@ -629,44 +839,41 @@ async function loadAttendanceReport() {
             }
 
             if (data.records.length === 0) {
-                tbody.innerHTML = `<tr><td colspan="5" class="px-4 py-6 text-center text-slate-500 italic">No students marked present yet for this session.</td></tr>`;
+                tbody.innerHTML = `<tr><td colspan="6" class="p-4 text-center text-zinc-500 italic">No attendance records found.</td></tr>`;
                 return;
             }
 
             let rows = "";
             data.records.forEach((r, idx) => {
-                const dateStr = new Date(r.scanned_at).toLocaleTimeString();
+                const dateStr = new Date(r.scanned_at).toLocaleString();
                 rows += `
-                    <tr class="hover:bg-slate-900/60 transition">
-                        <td class="px-4 py-3 text-slate-500">${idx + 1}</td>
-                        <td class="px-4 py-3 font-semibold text-cyan-400">${r.student_id}</td>
-                        <td class="px-4 py-3 text-emerald-400 font-bold">${r.distance_meters}m</td>
-                        <td class="px-4 py-3 text-slate-400 text-[11px]">${r.lat.toFixed(5)}, ${r.lon.toFixed(5)}</td>
-                        <td class="px-4 py-3 text-slate-400">${dateStr}</td>
+                    <tr class="hover:bg-zinc-900">
+                        <td class="p-3 text-zinc-500">${idx + 1}</td>
+                        <td class="p-3 font-bold text-white">${r.student_id}</td>
+                        <td class="p-3 text-zinc-200">${r.display_name || 'N/A'}</td>
+                        <td class="p-3 text-zinc-400 font-mono text-xs">${r.roll_number || 'N/A'}</td>
+                        <td class="p-3 text-white font-bold">${r.distance_meters}m</td>
+                        <td class="p-3 text-zinc-400">${dateStr}</td>
                     </tr>
                 `;
             });
             tbody.innerHTML = rows;
         } else {
-            if (tbody) tbody.innerHTML = `<tr><td colspan="5" class="px-4 py-6 text-center text-rose-400 font-medium">${data.message}</td></tr>`;
+            if (tbody) tbody.innerHTML = `<tr><td colspan="6" class="p-4 text-center text-rose-400">${data.message}</td></tr>`;
         }
     } catch (err) {
-        if (tbody) tbody.innerHTML = `<tr><td colspan="5" class="px-4 py-6 text-center text-rose-400">Failed to fetch report: ${err.message}</td></tr>`;
+        if (tbody) tbody.innerHTML = `<tr><td colspan="6" class="p-4 text-center text-rose-400">Failed to load report.</td></tr>`;
     }
 }
 
 // Toast Helper
 function showToast(msg, type = "info") {
     const toast = document.createElement('div');
-    let bg = type === 'success' ? 'bg-emerald-600' : type === 'error' ? 'bg-rose-600' : 'bg-cyan-600';
-    toast.className = `fixed bottom-5 right-5 z-50 ${bg} text-white px-4 py-2.5 rounded-xl shadow-2xl text-xs font-semibold flex items-center gap-2 transition-all transform translate-y-2 opacity-0`;
+    toast.className = `fixed bottom-5 right-5 z-50 bg-white text-black px-4 py-2 border border-black font-mono text-xs font-bold uppercase shadow-2xl transition-all transform translate-y-2 opacity-0`;
     toast.innerText = msg;
     document.body.appendChild(toast);
 
-    setTimeout(() => {
-        toast.classList.remove('translate-y-2', 'opacity-0');
-    }, 10);
-
+    setTimeout(() => toast.classList.remove('translate-y-2', 'opacity-0'), 10);
     setTimeout(() => {
         toast.classList.add('opacity-0');
         setTimeout(() => toast.remove(), 300);

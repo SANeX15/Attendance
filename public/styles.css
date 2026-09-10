@@ -1,47 +1,93 @@
-/* Custom Styles & Animation Utilities */
+/* OmniPresence by SANeX - Monochrome & Sharp Corners Design System */
 
-@keyframes pulseGlow {
-    0%, 100% {
-        box-shadow: 0 0 15px rgba(6, 182, 212, 0.2);
-    }
-    50% {
-        box-shadow: 0 0 25px rgba(6, 182, 212, 0.5);
-    }
+* {
+    border-radius: 0px !important; /* Force 90-degree sharp corners across all elements */
 }
 
-.glow-cyan {
-    animation: pulseGlow 3s infinite ease-in-out;
+:root {
+    --bg-black: #000000;
+    --bg-card: #09090B;
+    --bg-panel: #121215;
+    --border-color: #27272A;
+    --border-focus: #FFFFFF;
+    --text-main: #FAFAFA;
+    --text-muted: #A1A1AA;
 }
 
-/* OLED Canvas styling */
+body {
+    background-color: var(--bg-black);
+    color: var(--text-main);
+    font-family: 'Inter', -apple-system, sans-serif;
+}
+
+/* Sharp Monochrome Buttons */
+.btn-mono {
+    background-color: #FAFAFA;
+    color: #000000;
+    font-weight: 600;
+    border: 1px solid #FAFAFA;
+    transition: all 0.15s ease-in-out;
+}
+
+.btn-mono:hover {
+    background-color: #E4E4E7;
+    border-color: #FFFFFF;
+}
+
+.btn-mono-outline {
+    background-color: transparent;
+    color: #FAFAFA;
+    border: 1px solid #3F3F46;
+    transition: all 0.15s ease-in-out;
+}
+
+.btn-mono-outline:hover {
+    background-color: #18181B;
+    border-color: #FAFAFA;
+}
+
+.btn-mono-danger {
+    background-color: #000000;
+    color: #FAFAFA;
+    border: 1px solid #71717A;
+}
+
+.btn-mono-danger:hover {
+    background-color: #27272A;
+    border-color: #FAFAFA;
+}
+
+/* OLED Canvas Container */
 #oled-qrcode-container img,
 #oled-qrcode-container canvas {
     image-rendering: pixelated;
     display: block;
     max-width: 140px;
     height: auto;
+    border-radius: 0px !important;
 }
 
-/* Custom scrollbar */
+/* Custom Scrollbar */
 ::-webkit-scrollbar {
-    width: 6px;
-    height: 6px;
+    width: 5px;
+    height: 5px;
 }
 ::-webkit-scrollbar-track {
-    background: #090D16;
+    background: #000000;
 }
 ::-webkit-scrollbar-thumb {
-    background: #1F293D;
-    border-radius: 9999px;
+    background: #27272A;
 }
 ::-webkit-scrollbar-thumb:hover {
-    background: #374151;
+    background: #52525B;
 }
 
-/* Glassmorphism utility */
-.glass-panel {
-    background: rgba(18, 24, 38, 0.75);
-    backdrop-filter: blur(12px);
-    -webkit-backdrop-filter: blur(12px);
-    border: 1px solid rgba(255, 255, 255, 0.08);
+/* Mandatory Location Modal Animation */
+@keyframes fadeIn {
+    from { opacity: 0; transform: scale(0.98); }
+    to { opacity: 1; transform: scale(1); }
+}
+
+.modal-animate {
+    animation: fadeIn 0.2s ease-out forwards;
 }

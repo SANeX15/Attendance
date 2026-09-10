@@ -1,61 +1,98 @@
-# High-Security QR Attendance System (Phase 4 & 5)
+# OmniPresence by SANeX
 
-A dynamic, rotating OLED QR-code based classroom attendance application built with Node.js, Express, SQLite3, HTML5, Geolocation API, and HMAC-SHA256 token verification.
+A high-security, time-based dynamic TOTP QR code classroom attendance system featuring TOTP 15-second rotation, server-side bcrypt account authentication, mandatory high-accuracy GPS geofencing, and class-scoped admin management.
 
 ---
 
-## 🔒 Security Architecture & Pipeline
+## 🔒 System Architecture & TOTP Formula
 
-### Token Payload Format
+### TOTP Token Formula
+$$\text{time\_step} = \left\lfloor \frac{\text{unix\_time\_sec}}{15} \right\rfloor$$
+$$\text{payload} = \text{session\_id} + ":" + \text{time\_step}$$
+$$\text{hex\_signature} = \text{HMAC-SHA256}(\text{SHARED\_SECRET},\ \text{payload})$$
+
+### QR Token Payload String
 ```text
-<session_id>:<issued_at_epoch_sec>:<nonce>:<hex_signature>
+<session_id>:<time_step>:<hex_signature>
 ```
-Example: `SESS_101:1725800000:a1b2c3d4:7f8a9b0c...`
-
-### Signature Formula
-$$\text{HMAC-SHA256}(\text{session\_id} + ":" + \text{issued\_at} + ":" + \text{nonce},\ \text{SHARED\_SECRET})$$
+Example: `SESS_101:119265280:7f8a9b0c...`
 
 ---
 
-## 🚀 5-Stage Verification Pipeline (`/api/attendance/scan`)
+## 🚀 5-Stage Verification Pipeline (`POST /api/attendance/scan`)
 
-Every scan submission undergoes strict sequential verification:
+Every scan request is executed against a strict 5-stage verification pipeline:
 
-1. **HMAC Signature Check**: Re-computes the HMAC-SHA256 signature using `SHARED_SECRET`. Returns `401 INVALID_SIGNATURE` if signature mismatch or tampered payload.
-2. **Expiration Window**: Verifies $| \text{server\_now} - \text{issued\_at} | \le 25\text{ seconds}$. Returns `400 TOKEN_EXPIRED` if outside window.
-3. **Token Replay Prevention**: Hashes token string (`SHA-256`) and checks `redeemed_tokens` table. Returns `409 TOKEN_ALREADY_USED` if token was already redeemed.
-4. **Duplicate Student Check**: Verifies student has not already scanned in for the session. Returns `409 ALREADY_MARKED` if found.
-5. **Geofence Haversine Check**: Calculates distance between student's GPS location and session center $(lat, lon)$. Returns `403 OUT_OF_BOUNDS` if distance $> \text{radius\_meters}$.
-6. **Attendance Recorded**: Records present status in `attendance_records` and saves token hash to `redeemed_tokens`.
+1. **TOTP Signature & Grace Window Verification**:
+   Validates signature against current time-step (`current_step`) AND previous time-step (`current_step - 1`) to tolerate network latency or clock drift. Returns `401 INVALID_SIGNATURE` or `400 TOKEN_EXPIRED` if invalid.
+2. **Replay Attack Protection**:
+   Stores redeemed `(session_id, time_step)` in SQLite database (`redeemed_tokens`). Prevents any time-step QR code from being redeemed twice by anyone. Returns `409 TOKEN_ALREADY_USED` if found.
+3. **Session Lifecycle & Active Check**:
+   Verifies `session.is_active === 1` and `datetime('now') <= end_time`. Returns `403 SESSION_INACTIVE` or `403 SESSION_ENDED` if closed.
+4. **Duplicate Student Check**:
+   Ensures student has not already been marked present for the session. Returns `409 ALREADY_MARKED` if found.
+5. **Mandatory Geofence Haversine Check**:
+   Calculates physical distance between student's verified GPS position and classroom center $(lat, lon)$. Returns `403 OUT_OF_BOUNDS` if distance $> \text{radius\_meters}$.
 
 ---
 
-## 📁 Project Structure
+## 🔑 Password Reset Options (Admin & Student)
+
+### 1. Admin Dashboard Action
+Logged-in administrators can view the full class roster under **Admin Portal $\to$ Roster & Password Reset** and click **Reset Password** next to any student to update credentials immediately.
+
+### 2. Command-Line CLI Reset Tool (`scripts/reset_password.js`)
+Reset any account directly from the server CLI:
+```bash
+# Reset specific admin password
+node scripts/reset_password.js admin adminuser newpassword123
+
+# Reset specific student password
+node scripts/reset_password.js student student1 newpassword123
+
+# Emergency reset for ALL student accounts
+node scripts/reset_password.js all-students defaultpass123
+```
+
+---
+
+## 📁 Repository Structure
 
 ```text
 .
-├── schema.sql              # Database schema (sessions, redeemed_tokens, attendance_records)
-├── server.js              # Express REST API backend & SQLite DB database controller
-├── token_generator.js     # Mock ESP32 HMAC generator script
-├── test_suite.js          # Automated test runner testing all 5 rejection paths + valid scan
-├── package.json           # Dependencies (express, cors, better-sqlite3)
-├── public/                # Single-page Web App Frontend
-│   ├── index.html         # Responsive dark-theme UI with 3 tabs
-│   ├── app.js             # Camera scanner, GPS, API calls, feedback banners, OLED simulator
-│   └── styles.css         # Animations & custom styling
+├── schema.sql                   # Database schema (sessions, students, admins, assignments, tokens, records)
+├── server.js                   # Express REST API backend with JWT cookies & rate limiting
+├── token_generator.js          # TOTP 15s QR generator module & CLI tool
+├── test_suite.js               # Automated test runner testing all 14 test paths
+├── scripts/
+│   └── reset_password.js      # CLI utility for resetting admin/student passwords
+├── public/                     # Sharp Monochrome Single-Page Web App
+│   ├── index.html              # Multi-subview portal layout with location modal & admin roster
+│   ├── app.js                  # Sub-navigation, camera scanner, GPS modal, OLED simulator
+│   └── styles.css              # Sharp-corner ($90^\circ$) monochrome styling
 └── README.md
 ```
 
 ---
 
-## 🛠️ Installation & Setup
+## 🛠️ Environment Setup & Execution
 
-1. Install dependencies:
+1. Copy `.env.example` to `.env` and set `SHARED_SECRET`:
+```bash
+cp .env.example .env
+```
+
+2. Install dependencies:
 ```bash
 npm install
 ```
 
-2. Start the Backend Server:
+3. Run automated verification tests:
+```bash
+node test_suite.js
+```
+
+4. Start production/dev server:
 ```bash
 node server.js
 ```
@@ -63,48 +100,8 @@ The server will run on `http://localhost:3000`.
 
 ---
 
-## 🧪 Running Automated Verification Tests
+## 🎨 UI Features
 
-Run the comprehensive test suite verifying valid scans and all 5 rejection paths:
-```bash
-node test_suite.js
-```
-
-### Verified Test Cases:
-- **Test 1**: Valid scan within geofence ($\to$ HTTP 200 OK + `distance_meters`)
-- **Test 2**: Replay attack ($\to$ HTTP 409 `TOKEN_ALREADY_USED`)
-- **Test 3**: Tampered HMAC signature ($\to$ HTTP 401 `INVALID_SIGNATURE`)
-- **Test 4**: Expired timestamp ($\to$ HTTP 400 `TOKEN_EXPIRED`)
-- **Test 5**: Out-of-bounds GPS ($\to$ HTTP 403 `OUT_OF_BOUNDS`)
-- **Test 6**: Duplicate student check ($\to$ HTTP 409 `ALREADY_MARKED`)
-
----
-
-## 🖥️ Mock ESP32 CLI Generator
-
-Generate dynamic HMAC tokens on demand:
-```bash
-node token_generator.js SESS_101 0
-```
-- Argument 1: `session_id` (default `SESS_101`)
-- Argument 2: `timeOffsetSec` (0 for current time, -30 for expired token)
-
----
-
-## 📱 Web App Features
-
-1. **Student Scanner View**:
-   - Camera scanner powered by `html5-qrcode`
-   - Real-time GPS location acquisition with high-accuracy mode (`enableHighAccuracy: true`)
-   - Distinct feedback banners for `SUCCESS` and all error rejection states (`INVALID_SIGNATURE`, `TOKEN_EXPIRED`, `TOKEN_ALREADY_USED`, `ALREADY_MARKED`, `OUT_OF_BOUNDS`, `GPS_DISABLED`).
-   - Anti-spam rate limiting lockout.
-
-2. **Virtual OLED QR Simulator (ESP32)**:
-   - Simulates physical $128 \times 64$ Yellow/Blue OLED display.
-   - Rotates HMAC QR code every 10 seconds.
-   - Displays raw payload breakdown (Session ID, Issued At, Nonce, HMAC-SHA256 signature).
-   - "Direct Scan" button for browser testing without hardware.
-
-3. **Admin Dashboard & Attendance Reports**:
-   - Create classroom sessions with custom GPS center and radius.
-   - Live audit report table showing verified present students, distance from desk, and timestamps.
+- **OmniPresence by SANeX Branding**: High-impact monochrome design system with sharp 0px border-radius corners for all interactive elements.
+- **Mandatory Location Permission Modal**: Full-screen blocking modal enforcing high-accuracy GPS permissions before camera activation.
+- **Isolated Sub-Views**: Clean separation between Student Scanner/History, Admin Sessions/Roster/Reports, and Virtual OLED Simulator.

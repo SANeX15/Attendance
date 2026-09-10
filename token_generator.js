@@ -1,43 +1,64 @@
+require('dotenv').config();
 const crypto = require('crypto');
 
-const SHARED_SECRET = process.env.SHARED_SECRET || "SUPER_SECRET_HMAC_KEY";
+const INTERVAL_SECONDS = 15;
 
 /**
- * Generate a dynamic HMAC-signed attendance token (Mock ESP32).
- * Format: <session_id>:<issued_at_epoch_sec>:<nonce>:<hex_signature>
- * 
- * @param {string} sessionId 
- * @param {string} [secret=SHARED_SECRET] 
- * @param {number} [timeOffsetSec=0] 
- * @param {string} [customNonce=null] 
- * @returns {string} token
+ * Calculate current TOTP time step.
+ * @param {number} [unixTimeSec] 
+ * @returns {number} time_step
  */
-function generateToken(sessionId = "SESS_101", secret = SHARED_SECRET, timeOffsetSec = 0, customNonce = null) {
-    const issuedAt = Math.floor(Date.now() / 1000) + timeOffsetSec;
-    const nonce = customNonce || crypto.randomBytes(4).toString('hex');
-    
-    const payloadToSign = `${sessionId}:${issuedAt}:${nonce}`;
-    const hexSignature = crypto
-        .createHmac('sha256', secret)
-        .update(payloadToSign)
-        .digest('hex');
-        
-    return `${sessionId}:${issuedAt}:${nonce}:${hexSignature}`;
+function getTimeStep(unixTimeSec = Math.floor(Date.now() / 1000)) {
+    return Math.floor(unixTimeSec / INTERVAL_SECONDS);
 }
 
-// If executed directly from command line
+/**
+ * Generate a dynamic TOTP attendance QR token (Mock ESP32).
+ * Formula: HMAC-SHA256(shared_secret, `${session_id}:${time_step}`)
+ * QR String: `${session_id}:${time_step}:${hex_signature}`
+ * 
+ * @param {string} sessionId 
+ * @param {string} secret 
+ * @param {number} [timeStepOffset=0] - Offset in time steps (+1, -1, etc.)
+ * @param {number} [customUnixTime=null] 
+ * @returns {string} token
+ */
+function generateToken(sessionId = "SESS_101", secret = process.env.SHARED_SECRET, timeStepOffset = 0, customUnixTime = null) {
+    const activeSecret = secret || process.env.SHARED_SECRET;
+    if (!activeSecret) {
+        throw new Error("SHARED_SECRET environment variable is not defined.");
+    }
+
+    const unixTimeSec = customUnixTime !== null ? customUnixTime : Math.floor(Date.now() / 1000);
+    const timeStep = getTimeStep(unixTimeSec) + timeStepOffset;
+
+    const payloadToSign = `${sessionId}:${timeStep}`;
+    const hexSignature = crypto
+        .createHmac('sha256', activeSecret)
+        .update(payloadToSign)
+        .digest('hex');
+
+    return `${sessionId}:${timeStep}:${hexSignature}`;
+}
+
+// CLI Execution Helper
 if (require.main === module) {
     const args = process.argv.slice(2);
     const sessionId = args[0] || "SESS_101";
-    const offsetSec = parseInt(args[1] || "0", 10);
-    const secret = args[2] || SHARED_SECRET;
-    const nonce = args[3] || null;
+    const offset = parseInt(args[1] || "0", 10);
+    const secret = args[2] || process.env.SHARED_SECRET;
 
-    const token = generateToken(sessionId, secret, offsetSec, nonce);
-    console.log(token);
+    try {
+        const token = generateToken(sessionId, secret, offset);
+        console.log(token);
+    } catch (err) {
+        console.error("Token Generation Error:", err.message);
+        process.exit(1);
+    }
 }
 
 module.exports = {
     generateToken,
-    SHARED_SECRET
+    getTimeStep,
+    INTERVAL_SECONDS
 };
